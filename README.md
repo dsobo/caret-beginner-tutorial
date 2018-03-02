@@ -1,12 +1,12 @@
 Beginner's Guide to Caret
 ================
 Dennis Sobolewski
-2018-02-28
+2018-03-02
 
-Simplifying the Caret Framework
--------------------------------
+Simple Caret Framework
+----------------------
 
-Caret is an extremely useful R package that makes training, comparing, and tuning models easier. The goal of this exercise is to demonstrate the simplest implementation of Caret using the [Ames Housing Dataset](https://ww2.amstat.org/publications/jse/v19n3/decock.pdf). For this priblem we are trying to create a model for predicting the sale price of homes in Ames, Iowa. I remember being a n00b and struggling to find answers to basic modeling questions so I will try to address many of those beginner "gotcha" questions that once my life difficult. For the sake of this tutorial I will not touch on feature engineering besides simple pre-processing steps that come built in with Caret but it is an important step for maximizing the accuracy of a model.
+Caret is an extremely useful R package that makes training, comparing, and tuning models easier. The goal of this exercise is to demonstrate the simplest implementation of Caret using the [Ames Housing Dataset](https://ww2.amstat.org/publications/jse/v19n3/decock.pdf). For this problem we are trying to create a model for predicting the sale price of homes in Ames, Iowa. I remember being a n00b and struggling to find answers to basic modeling questions so I will try to address some of those beginner "gotcha" questions that stumped me initially. For the sake of this tutorial I will not touch on feature engineering besides simple pre-processing steps that come built in with Caret.
 
 The Data
 --------
@@ -32,7 +32,7 @@ map_df(train, ~sum(is.na(.))) %>% gather() %>%
 
 ![](Caret_Beginners_Tutorial_files/figure-markdown_github/missing_vars_code-1.png)
 
-Our first decision is what to do with this missing data. After reading through the data documentation it is not entirely clear if the missing values are due to data collection issues or if the absense simply means the value is "none" or 0 in numerical cases. Looking at the plot it appears there are many missing values for the PoolQC variable. It would make sense that many houses would not have a pool and this should in fact be replaced with the category "none". The missing values for the garage and basement variables all seem to be perfectly correlated making me think if a home did not have a garage they had NAs across the board for those. I am going to assume a missing value should be replaced with "none" if categorical or 0 if numeric. If we believed these were missing due to errors in data collection we would want to impute the missing values with our best estimate. Caret has a few methods for doing this in its preProcess function that are simple to use.
+Our first decision is what to do with this missing data. After reading through the data documentation it is not entirely clear if the missing values are due to data collection issues or if the absense simply means the value is "none" or 0 in numerical cases. Looking at the plot it appears there are many missing values for the PoolQC variable. It would make sense that many houses would not have a pool and this should in fact be replaced with the category "none". The missing values for the garage and basement variables all seem to be perfectly correlated making me think if a home did not have a garage they had NAs across the board for those. I am going to assume a missing value should be replaced with "none" if categorical or 0 if numeric. If we believed these were missing due to errors in data collection we would want to impute the missing values with a best estimate. Caret has a few methods for doing this in its preProcess function that are simple to use.
 
 *Note: To replace the NAs for categorical data we will want these variables to be type = character. Once values are replaced we want to then change these to type = factor for modeling*
 
@@ -53,7 +53,7 @@ rm(train_cat,train_num)
 Setting our Training Framework
 ------------------------------
 
-Now that we have our data in a clean format we are ready to define our Caret trainControl settings. These settings will determine how a model is evaluated so we can compare apples to apples when looking at results for different models. The most simple evaluation method is to train a model on some portion of the training data, predict the outcome on the portion that was withheld, and then measure the accuracy of the predicted vs actual values. In order to make sure we are not overfitting our model or working with a biased train/test set that could affect results it is best practice to use cross validation. In Caret we can use the createFolds function to create an index to be used for cross validation. Here we create 10 folds that we then feed into our trainControl index. Each model will be train on 9 of the folds and then predict the SalePrice on the 10th. This will continue until every fold's outcomes have been predicted based on the other 9 and the results will be averaged. This ensures each model is undergoing the same 10 fold cross validation so we are comparing their results fairly.
+Now that we have our data in a clean format we are ready to define our Caret trainControl settings. These settings will determine how a model is evaluated so we can compare apples to apples when looking at results for different models. The most simple evaluation method is to train a model on some portion of the training data, predict the outcome on the portion that was withheld, and then measure the accuracy of the predicted vs actual values. In order to make sure we are not overfitting our model or working with a biased train/test set that could affect results we will use cross validation. In Caret we can use the createFolds function to create an index of stratified samples to be used for cross validation. Here we create 10 folds that we then feed into our trainControl index. Each model will train on 9 of the folds and then predict the SalePrice on the 10th. This will continue until every fold's outcomes have been predicted based on the other 9 and the results will be averaged. This ensures each model is undergoing the same 10 fold cross validation so we are comparing their results fairly.
 
 ``` r
 #define training folds and steps for modeling
@@ -72,7 +72,7 @@ myControl <- trainControl(
 Lets get Modeling!
 ------------------
 
-Now that we have our training method we are ready to start modeling. In the past I remember having a lot of uncertainty at this stage due to the factor data we have in our dataset. Regression models cannot handle factor data so should I create dummy variables prior to training my models? Shouls these dummy variables also be used for ensemble algorithms like random forest that are able to handle factors? It took me way too long to find out that when using the formula layout (y~.) in Caret it automatically turns all factors into dummy variables and that I was doing extra work for no reason. Also, using the formula method with algos like random forest is fine in most cases. For this write up I experimented with both and found the dummy variable version of random forest actually out performed the factor one.
+Now that we have our training method we are ready to start modeling. In the past I remember having a lot of uncertainty at this stage due to the factor data we have in our dataset. Regression models cannot handle factor data so should I create dummy variables prior to training my models? Should these dummy variables also be used for ensemble algorithms like random forest that are able to handle factors? It took me way too long to find out that when using the formula layout (y~.) in Caret it automatically turns all factors into dummy variables and that I was doing extra work for no reason. Also, using the formula method with algos like random forest is fine in most cases. For this write up I experimented with both and found the dummy variable version of random forest actually out performed the factor one.
 
 The beauty of Caret is that it recognized algorithms from many different R packages. Once the framework for training and evaluating a model is built it is as easy as changing one variable in most cases to do the same thing on a completely different maching learning algorithm. A list of all models possible for Caret can be found [here](https://topepo.github.io/caret/available-models.html).
 
@@ -184,7 +184,7 @@ min(xgbTree$results$RMSE)
 Comparing Results
 -----------------
 
-Caret has an extremely useful resamples function for comparing the results of different models. After combining our models into a list we can use built in plots to compare each model based on the cross validated RMSE results. I find the built in dot plot to be easest to read. Here we are looking for not only the lowest RMSE value but also the least variation among the results for each validation fold. As we can see the XGBoost model performed best with a small variation among results. We can see below that the xgbTree model outperformed all others in these categories based on the below.
+Caret has an useful resamples function for comparing the results of different models. After combining our models into a list we can use built in plots to compare each model based on the cross validated RMSE results. I find the built in dot plot to be easest to read. Here we are looking for not only the lowest RMSE value but also the least variation among the results for each validation fold. As we can see the XGBoost model performed best with a small variation among results. We can see below that the xgbTree model outperformed all others in these categories based on the below.
 
 ``` r
 ##Compare all models to choose the best one
