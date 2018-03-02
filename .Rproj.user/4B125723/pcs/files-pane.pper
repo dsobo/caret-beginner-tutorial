@@ -1,0 +1,9 @@
+{
+    "path" : "~/R/kaggle/housing_prices_revisited",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}

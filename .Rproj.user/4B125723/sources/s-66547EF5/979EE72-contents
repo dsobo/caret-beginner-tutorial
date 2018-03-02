@@ -1,0 +1,197 @@
+---
+title: "Modeling with Caret"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(caret)
+
+load("/home/sobo/R/kaggle/housing_prices_revisited/caretmod.RData")
+
+
+```
+
+## Simplifying the Caret Framework
+
+Caret is an extremely useful R package that makes training, comparing, and tuning models extremely easy. The goal of this exercise is to demonstrate the simplest implementation of Caret using the [Ames Housing Dataset](https://ww2.amstat.org/publications/jse/v19n3/decock.pdf). For this priblem we are trying to create the best model for predicting the sale price of homes in Ames, Iowa. I remember being a n00b and struggling to find answers to basic modeling questions so I will try and address many of those beginner "gotcha" questions that made my life difficult. 
+
+## The Data
+
+Once we remove the "Id" column from our training dataset we are left with a mix of 80 numeric and categorical variabled. If we take a look we also see there are a large number of missing values in our dataset.  
+
+
+```{r missing_vars_code}
+
+train <- read.csv(here("data","train.csv"), stringsAsFactors = F)
+train <- train %>% select(-Id)
+
+map_df(train, ~sum(is.na(.))) %>% gather() %>% 
+  filter(value > 0) %>%
+  ggplot(.,aes(x = reorder(key,-value), y = value)) + 
+  geom_bar(stat="identity") +
+  labs(title = "Missing Values",x="") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+```
+
+
+Our first decision is what to do with this missing data. After reading through the documentation on the data it is not entirely clear if the missing values are due to data collection issues or if the absense simply means the value is "none" or 0 in numerical cases. Looking at the plot it appears there are many missing values for the PoolQC variable. It would make sense that many houses would not have a pool and this should in fact be replaced with the category "none". The missing values for the garage and basement variables all seem to be perfectly correlated making me think if a home did not have a garage they had NAs across the board for those. I am going to assume a missing value should be replaced with "none" if categorical or 0 if numeric. If we believed these were missing due to errors in data collection we would want to impute the missing values which Caret can easily do in the preProcess argument. 
+
+*Note: To replace the NAs for categorical data we will want these variables to be type = character. Once values are replaced we want to then change these to type = factor for modeling*
+
+```{r missing_vars_replace}
+
+#Replace missing values with "none" or "0" based on categorical vs numeric 
+
+train_num <- train %>% select_if(is.numeric) 
+train_cat <- train %>% select_if(is.character) 
+
+train_num[is.na(train_num)] <- 0
+train_cat[is.na(train_cat)] <- "None"
+train_cat <- map_df(train_cat,as.factor)
+
+train_pp <- cbind(train_cat,train_num)
+rm(train_cat,train_num)
+```
+
+## Setting our Training Framework
+
+Now that we have our data in a clean format we are ready to define our trainControl settings. These settings will determine how a model is evaluated so we can compare apples to apples when looking at results for different models. We can use the createFolds function in Caret to create an index to be used for cross validation. Here we create 10 folds that we then feed into our trainControl index. This ensures each model is undergoing the same 10 fold cross validation so we are comparing their results fairly.
+
+```{r trainControl}
+#define training folds and steps for modeling
+##set.seed for reproducability when randomly choosing folding
+set.seed(1108)
+
+myFolds <- createFolds(train_pp$SalePrice,10)
+
+myControl <- trainControl(
+  verboseIter = F, #prints training progress to console
+  savePredictions = T,
+  index = myFolds
+)
+
+```
+
+## Lets get Modeling!
+
+Now that we have our training method we are ready to start modeling. Here is a stage I remember struggling with since our dataset now contains numeric and factor data. In the past I set about creating dummy varibles for all factors so I could use regression techiniques on the data. It took me way to long to find out that when using the formula layout (y~.) in Caret it automatically turns all factors to dummy variables when necessary. A list of all models possible for Caret can be found [here](https://topepo.github.io/caret/available-models.html). 
+
+### Multiple Regression
+
+We will start with the most basic model possible, a multiple regression model. For regression models it is almost always recommended to center and scale your data beforehand. Caret makes this simple with the preProcess settings in the train function. We wil also use "nzv" to remove all varaibles with zero or near zero varianace. We can also easily create principal components to be used in our model by adding "pca" to preProcess. For PCA many near zero variance variables might be combined into useful information so we will want to use "zv" to only remove zero variance variables. Now we have RMSE values that we can use as a benchmark for comparing other modeling techniques. We can see that the PCA model drastically outperformed the regular multiple regression model. 
+
+```{r regression_model,  warning=FALSE}
+
+lm <- train(
+  SalePrice~.,
+  data = train_pp,
+  preProcess = c("nzv","center","scale"),
+  metric = "RMSE",
+  method = "lm",
+  trControl = myControl
+)
+
+min(lm$results$RMSE)
+
+lm_pca <- train(
+  SalePrice~.,
+  data = train_pp,
+  preProcess = c("zv","center","scale","pca"),
+  metric = "RMSE",
+  method = "lm",
+  trControl = myControl
+)
+
+min(lm_pca$results$RMSE)
+
+```
+
+### GLMNET
+
+Glmnet is a package that fits a generalized linear model via penalized maximum likelihood. More information on how this works can be found [here](https://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html). Glmnet is easily interpretable like a multiple regression model but avoids many of the common pitfalls in cases where there are many highly correlated variables. One of the main differences when using glmnet in the Caret framework is that there are tuning parameters. Caret makes it very simple to test many different combinations of tuning parameters by using a tuning grid. If the tuneGrid variable is not specified Caret will choose default values that may yield decent results but can probably be improved upon in most cases. Looking at the Caret methods documentation we can see there are two variables that can be tuned: alpha and lambda. Alpha is always 0-1 while lambda can be infinite. The default settings choose a best lambda of 12563 for us which I will use as a base for choosing values. Glmnet can train many different values of lambda at once so adding a large sequence of these to your tuningGrid will not drastically affect run time. As we can see our optimal glmnet model was an improvement over our other regression models. 
+
+```{r glmnet_model,  warning=FALSE, message=F}
+
+glmnet <- train(
+  SalePrice~.,
+  data = train_pp,
+  preProcess = c("nzv","center","scale"),
+  metric = "RMSE",
+  method = "glmnet",
+  trControl = myControl,
+  tuneGrid = expand.grid(
+    alpha = seq(0,1,.1),
+    lambda = seq(1000,50000,100)
+  )
+)
+
+min(glmnet$results$RMSE)
+
+```
+
+### Random Forest
+
+Random Forest models are extremely easy to use with little or no pre-processing necessary. These models are based off of decision tree principals which make them highly adaptable to almost all types of input data. What you gain in ease-of-use you lose in interpretability however and random forest models are typically seen as a "black box" algorithm. When we look at the Caret documentation we can see the only variable that requires training is the mtry varaible. The default settings choose an optimal mtry of 131 so we will pick a range around that number to see if we can improve on this. 
+
+```{r rf_mod,  warning=FALSE, message=F}
+
+rf <- train(
+  SalePrice~.,
+  data = train_pp,
+  metric = "RMSE",
+  method = "rf",
+  trControl = myControl,
+  tuneGrid = expand.grid(
+    mtry = seq(70, 150, 5)
+  )
+)
+
+min(rf$results$RMSE)
+
+```
+
+### XGBoost 
+
+The [XGBoost](https://cran.r-project.org/web/packages/xgboost/vignettes/xgboostPresentation.html) package is another popular modeling tool in R and has been featured in muyltiple winning submissions for Kaggle online data science competitions. XGBoost creates gradient boosted tree models that can be finely tuned to maximize results. These share many of the benefits that the random forest algorithm has but requires the tuning of many parameters in order to acheieve the best results. Using the Caret documentation, [this](https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/) beginners guide to XGBoost tuning, and good old fashioned trial and error I came up with the below tuning grid as a quick first stab. This is an example where experience is needed to find the best results and modeling can be a bit of an artform. I am certain these results could be improved upon with finer tuning. 
+
+```{r xgboost,  warning=FALSE, message=F}
+
+xgbTree <- train(
+  SalePrice~.,
+  data = train_pp,
+  metric = "RMSE",
+  method = "xgbTree",
+  trControl = myControl,
+  tuneGrid = expand.grid(
+    nrounds= 500,
+    max_depth = c(4,6,8),
+    eta = c(.05,0.1,0.2),
+    gamma = 0,
+    colsample_bytree = c(.5,.7),
+    subsample = c(0.5,0.8),
+    min_child_weight = 0
+  )
+)
+
+min(xgbTree$results$RMSE)
+
+```
+
+## Comparing Results
+
+Caret has an extremely useful resamples function for comparing the results of different models. After combining our models into a list we can use built in plots to compare each model based on the cross validated RMSE results. I find the built in dot plot to be easest to read. Here we are looking for not only the lowest RMSE value but also the least variation among the results for each validation fold. As we can see the XGBoost model performed best with a small variation among results. 
+
+```{r resamples,  warning=FALSE, message=F}
+
+##Compare all models to choose the best one
+mod_list <- list(lm = lm,pca = lm_pca,glmnet = glmnet,rf = rf, XGBTree = xgbTree, rpart = rpart)
+resamp <- resamples(mod_list)
+
+dotplot(resamp, metric = "RMSE")
+
+```
